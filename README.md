@@ -1,6 +1,12 @@
-# TWRP for WSA (x86_64)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/gshellmr-code/twrp-builder-wsa/master/assets/twrp.png" alt="TWRP for WSA" width="200"/>
+</p>
 
-Build TWRP recovery for Windows Subsystem for Android (WSA) using GitHub Actions.
+<h1 align="center">TWRP for WSA (x86_64)</h1>
+
+<p align="center">
+  Build TWRP recovery for Windows Subsystem for Android (WSA) using GitHub Actions.
+</p>
 
 ## How it works
 
