@@ -7,11 +7,10 @@ jobs:
   ssh:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Show my IP
+        run: curl -s ifconfig.me && echo ""
 
-      - name: Setup SSH
-        uses: P3TERX/Actions-OpenSSH@master
-        env:
-          SSH_PASSWORD: twrp123
+      - name: Start SSH via tmate
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 360
