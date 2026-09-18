@@ -50,14 +50,14 @@ jobs:
           chmod a+x ~/bin/repo
           sudo ln -sf ~/bin/repo /usr/bin/repo
 
-      - name: Initialize repo (zefie x86_64 manifest)
+      - name: Initialize repo
         run: |
           mkdir workspace
           cd workspace
           echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
           git config --global user.name "CYBER-BUDDY"
           git config --global user.email "gshellmr-code@users.noreply.github.com"
-          repo init --depth=1 -u https://github.com/zefie/android-x86_lineage_twrp_manifest.git \
+          repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
             -b ${{ github.event.inputs.manifest_branch || 'twrp-14.1' }}
         id: pwd
 
@@ -76,7 +76,7 @@ jobs:
           cd workspace
           source build/envsetup.sh
           export ALLOW_MISSING_DEPENDENCIES=true
-          lunch android_x86_64-eng
+          lunch aosp_x86_64-eng
           make clean
           make recoveryimage -j$(nproc --all) 2>&1 | tee build.log
           echo "Build exit code: $?"
