@@ -71,12 +71,23 @@ jobs:
         with:
           swap-size-gb: 12
 
+      - name: List available lunch targets
+        run: |
+          cd workspace
+          source build/envsetup.sh
+          echo "=== Available products ==="
+          lunch 2>&1 | head -80 || true
+          echo ""
+          echo "=== Searching for x86_64 ==="
+          grep -ri "x86_64\|x86" device/*/AndroidProducts.mk device/*/*/AndroidProducts.mk 2>/dev/null | head -20 || true
+        continue-on-error: true
+
       - name: Build Recovery Image
         run: |
           cd workspace
           source build/envsetup.sh
           export ALLOW_MISSING_DEPENDENCIES=true
-          lunch aosp_x86_64-eng
+          lunch aosp_x86_64-trunk_staging-userdebug
           make clean
           make recoveryimage -j$(nproc --all) 2>&1 | tee build.log
           echo "Build exit code: $?"
