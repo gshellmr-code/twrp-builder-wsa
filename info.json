@@ -1,0 +1,10 @@
+{
+  "twrp_support": true,
+  "gapp_support": true,
+  "root_support": true,
+  "root_method": "magisk",
+  "amazon_support": false,
+  "build_version": "4.1.0",
+  "wsa_version": "2309.x",
+  "recovery_flag": false
+}

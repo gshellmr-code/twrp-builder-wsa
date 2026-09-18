@@ -1,0 +1,118 @@
+name: Build TWRP x86_64 for WSA
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_branch:
+        description: 'TWRP manifest branch'
+        required: true
+        default: 'twrp-14.1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          df -h
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y repo git-core cpio zip zipinfo lz4 lzop \
+            libncurses5 libssl-dev bc bison flex rsync
+
+      - name: Sync sources
+        run: |
+          mkdir -p ~/twrp-build && cd ~/twrp-build
+          repo init -u https://github.com/zefie/android-x86_lineage_twrp_manifest.git \
+            -b ${{ github.event.inputs.manifest_branch || 'twrp-14.1' }}
+          repo sync -c -j$(nproc) --no-tags
+
+      - name: Compile TWRP
+        run: |
+          cd ~/twrp-build
+          source build/envsetup.sh
+          lunch android_x86_64-eng
+          make recoveryimage -j$(nproc) 2>&1 | tee build.log
+          echo "Build exit code: $?"
+
+      - name: Extract ramdisk
+        run: |
+          cd ~/twrp-build
+          OUTDIR=out/target/product/x86_64
+          if [ -f "$OUTDIR/ramdisk-recovery.img" ]; then
+            mkdir -p /tmp/ramdisk
+            cd /tmp/ramdisk
+            cpio -idm < $GITHUB_WORKSPACE/../twrp-build/$OUTDIR/ramdisk-recovery.img
+          elif [ -f "$OUTDIR/recovery.img" ]; then
+            python3 -c "
+          import struct, gzip, os
+          with open('$GITHUB_WORKSPACE/../twrp-build/$OUTDIR/recovery.img', 'rb') as f:
+              data = f.read()
+          if data[:8] == b'ANDROID!':
+              ksize = struct.unpack('<I', data[8:12])[0]
+              rsize = struct.unpack('<I', data[16:20])[0]
+              page = struct.unpack('<I', data[36:40])[0]
+              roff = page + ((ksize + page - 1) // page) * page
+              rdata = data[roff:roff + rsize]
+              if rdata[:2] == b'\x1f\x8b':
+                  rdata = gzip.decompress(rdata)
+              os.makedirs('/tmp/ramdisk', exist_ok=True)
+              with open('/tmp/ramdisk.img', 'wb') as f:
+                  f.write(rdata)
+          "
+            cd /tmp/ramdisk
+            cpio -idm < /tmp/ramdisk.img
+          fi
+
+      - name: Compile dispatcher (init)
+        run: |
+          sudo apt-get install -y musl-tools
+          musl-gcc -static -o /tmp/ramdisk/init \
+            $GITHUB_WORKSPACE/init.c
+          file /tmp/ramdisk/init
+
+      - name: Inject info.json and patch.json
+        run: |
+          cp $GITHUB_WORKSPACE/info.json /tmp/ramdisk/info.json
+          cp $GITHUB_WORKSPACE/patch.json /tmp/ramdisk/patch.json
+
+      - name: Verify x86_64
+        run: |
+          echo "=== Files ==="
+          ls -la /tmp/ramdisk/
+          echo ""
+          echo "=== TWRP binary ==="
+          file /tmp/ramdisk/sbin/twrp || echo "twrp not found at /sbin/twrp"
+          file /tmp/ramdisk/sbin/recovery || echo "recovery not found"
+          echo ""
+          echo "=== Linker ==="
+          file /tmp/ramdisk/sbin/linker64 || echo "linker64 not found"
+          echo ""
+          echo "=== GUI resources ==="
+          ls -la /tmp/ramdisk/twres/ 2>/dev/null || echo "twres not found"
+          ls -la /tmp/ramdisk/res/ 2>/dev/null || echo "res not found"
+          echo ""
+          echo "=== init ==="
+          file /tmp/ramdisk/init
+          echo ""
+          echo "=== info.json ==="
+          cat /tmp/ramdisk/info.json
+
+      - name: Package twrp.7z
+        run: |
+          cd /tmp/ramdisk
+          7z a /tmp/twrp.7z .
+          ls -la /tmp/twrp.7z
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: twrp-x86_64-wsa
+          path: /tmp/twrp.7z
+          retention-days: 30
