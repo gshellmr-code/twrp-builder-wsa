@@ -83,6 +83,9 @@ jobs:
           PRODUCT_DEVICE := twrpx8664
           PRODUCT_BRAND := generic
           PRODUCT_MODEL := TWRP x86_64
+          TW_THEME := landscape_hdpi
+          TW_SCREEN_WIDTH := 1920
+          TW_SCREEN_HEIGHT := 1080
           EOF
 
           cat > device/emulator/twrpx8664/BoardConfig.mk << 'EOF'
