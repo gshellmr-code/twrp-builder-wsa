@@ -8,24 +8,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Setup SSH server
+      - name: Setup web terminal
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq openssh-server
-          sudo mkdir -p /run/sshd
-          echo "runner:twrp123" | sudo chpasswd
-          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/UsePAM yes/UsePAM no/' /etc/ssh/sshd_config
-          sudo ssh-keygen -A
-          sudo service ssh start
+          sudo apt-get install -y -qq ttyd curl
 
-      - name: Start SSH tunnel via bore
+      - name: Start ttyd + cloudflare tunnel
         run: |
-          curl -sL https://github.com/ekzhang/bore/releases/latest/download/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz | tar xz
-          chmod +x bore
-          sudo mv bore /usr/local/bin/
-          bore local 22 --to bore.pub 2>&1 &
+          # Start web terminal on port 7681
+          ttyd -p 7681 -c runner:twrp123 bash &
+          sleep 2
+          
+          # Install cloudflared
+          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
+          
+          # Create tunnel
+          cloudflared tunnel --url http://localhost:7681 2>&1 &
           sleep 10
+          
           echo ""
-          echo "Copy the SSH command from above and paste in PowerShell"
+          echo "Open the https://xxxx.trycloudflare.com URL above in your browser"
+          echo "Login: runner / twrp123"
+          echo "Then run build commands in the terminal"
           while true; do sleep 60; done
