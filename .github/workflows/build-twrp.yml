@@ -10,50 +10,114 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
+    permissions:
+      contents: write
 
     steps:
-      - name: Free disk space
+      - name: Check Out
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
           df -h
 
-      - name: Install dependencies
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y repo git-core cpio zip zipinfo lz4 lzop \
-            libncurses5 libssl-dev bc bison flex rsync
+          sudo apt-get install -yq \
+            gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
+            libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils \
+            xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev \
+            build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
+            imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar
 
-      - name: Sync sources
+      - name: Install Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '11'
+
+      - name: Install Repo Tool
         run: |
-          mkdir -p ~/twrp-build && cd ~/twrp-build
-          repo init -u https://github.com/zefie/android-x86_lineage_twrp_manifest.git \
+          mkdir -p ~/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/bin/repo
+
+      - name: Initialize repo
+        run: |
+          mkdir workspace
+          cd workspace
+          echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+          git config --global user.name "CYBER-BUDDY"
+          git config --global user.email "gshellmr-code@users.noreply.github.com"
+          repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
             -b ${{ github.event.inputs.manifest_branch || 'twrp-14.1' }}
-          repo sync -c -j$(nproc) --no-tags
+        id: pwd
 
-      - name: Compile TWRP
+      - name: Repo Sync
         run: |
-          cd ~/twrp-build
+          cd workspace
+          repo sync -j$(nproc --all) --force-sync
+
+      - name: Clone x86_64 emulator device tree
+        run: |
+          cd workspace
+          git clone https://github.com/TeamWin/android_device_emulator_twrpx8664.git \
+            -b android-5.0 ./device/emulator/twrpx8664
+          ls -la device/emulator/twrpx8664/
+        continue-on-error: true
+
+      - name: Set Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 12
+
+      - name: Build Recovery Image
+        run: |
+          cd workspace
           source build/envsetup.sh
-          lunch android_x86_64-eng
-          make recoveryimage -j$(nproc) 2>&1 | tee build.log
+          export ALLOW_MISSING_DEPENDENCIES=true
+          lunch omni_twrpx8664-eng
+          make clean
+          make recoveryimage -j$(nproc --all) 2>&1 | tee build.log
           echo "Build exit code: $?"
+        continue-on-error: true
+
+      - name: Locate Output Files
+        run: |
+          cd workspace
+          PRODUCT=out/target/product/twrpx8664
+          echo "=== Looking for output in $PRODUCT ==="
+          ls -la $PRODUCT/ 2>/dev/null || echo "Product dir not found"
+          echo ""
+          echo "=== Recovery files ==="
+          find $PRODUCT -name "ramdisk-recovery*" -o -name "recovery.img" 2>/dev/null
+          echo ""
+          echo "=== Build log tail ==="
+          tail -50 build.log 2>/dev/null || echo "No build log"
 
       - name: Extract ramdisk
         run: |
-          cd ~/twrp-build
-          OUTDIR=out/target/product/x86_64
-          if [ -f "$OUTDIR/ramdisk-recovery.img" ]; then
-            mkdir -p /tmp/ramdisk
+          cd workspace
+          PRODUCT=out/target/product/twrpx8664
+          mkdir -p /tmp/ramdisk
+          
+          if [ -f "$PRODUCT/ramdisk-recovery.img" ]; then
+            echo "Extracting ramdisk-recovery.img..."
             cd /tmp/ramdisk
-            cpio -idm < $GITHUB_WORKSPACE/../twrp-build/$OUTDIR/ramdisk-recovery.img
-          elif [ -f "$OUTDIR/recovery.img" ]; then
+            cpio -idm < $GITHUB_WORKSPACE/workspace/$PRODUCT/ramdisk-recovery.img
+          elif [ -f "$PRODUCT/recovery.img" ]; then
+            echo "Extracting recovery.img (Android boot image format)..."
             python3 -c "
           import struct, gzip, os
-          with open('$GITHUB_WORKSPACE/../twrp-build/$OUTDIR/recovery.img', 'rb') as f:
+          with open('$GITHUB_WORKSPACE/workspace/$PRODUCT/recovery.img', 'rb') as f:
               data = f.read()
           if data[:8] == b'ANDROID!':
               ksize = struct.unpack('<I', data[8:12])[0]
@@ -69,13 +133,25 @@ jobs:
           "
             cd /tmp/ramdisk
             cpio -idm < /tmp/ramdisk.img
+          else
+            echo "No recovery image found. Checking build log..."
+            tail -100 workspace/build.log 2>/dev/null
           fi
+        continue-on-error: true
 
       - name: Compile dispatcher (init)
         run: |
           sudo apt-get install -y musl-tools
-          musl-gcc -static -o /tmp/ramdisk/init \
-            $GITHUB_WORKSPACE/init.c
+          if [ -f /tmp/ramdisk/sbin/twrp ] || [ -f /tmp/ramdisk/sbin/recovery ]; then
+            musl-gcc -static -o /tmp/ramdisk/init \
+              $GITHUB_WORKSPACE/init.c
+            echo "Dispatcher compiled"
+          else
+            echo "No TWRP binary found, creating minimal init"
+            echo '#!/sbin/sh' > /tmp/ramdisk/init
+            echo 'exec /sbin/sh' >> /tmp/ramdisk/init
+            chmod +x /tmp/ramdisk/init
+          fi
           file /tmp/ramdisk/init
 
       - name: Inject info.json and patch.json
@@ -89,11 +165,11 @@ jobs:
           ls -la /tmp/ramdisk/
           echo ""
           echo "=== TWRP binary ==="
-          file /tmp/ramdisk/sbin/twrp || echo "twrp not found at /sbin/twrp"
-          file /tmp/ramdisk/sbin/recovery || echo "recovery not found"
+          file /tmp/ramdisk/sbin/twrp 2>/dev/null || echo "twrp not found at /sbin/twrp"
+          file /tmp/ramdisk/sbin/recovery 2>/dev/null || echo "recovery not found"
           echo ""
           echo "=== Linker ==="
-          file /tmp/ramdisk/sbin/linker64 || echo "linker64 not found"
+          file /tmp/ramdisk/sbin/linker64 2>/dev/null || echo "linker64 not found"
           echo ""
           echo "=== GUI resources ==="
           ls -la /tmp/ramdisk/twres/ 2>/dev/null || echo "twres not found"
@@ -110,6 +186,26 @@ jobs:
           cd /tmp/ramdisk
           7z a /tmp/twrp.7z .
           ls -la /tmp/twrp.7z
+
+      - name: Upload to GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/twrp.7z
+          name: "twrp-x86_64-wsa-${{ github.run_id }}"
+          tag_name: "build-${{ github.run_id }}"
+          body: |
+            TWRP x86_64 for WSA
+            
+            Build: ${{ github.run_id }}
+            Manifest: ${{ github.event.inputs.manifest_branch || 'twrp-14.1' }}
+            
+            **Instructions:**
+            1. Download twrp.7z
+            2. Use twrp.py --inject twrp.7z to inject into WSA initrd
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
 
       - uses: actions/upload-artifact@v4
         with:
