@@ -8,15 +8,5 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Instructions
-        run: |
-          echo "==========================================="
-          echo "  WAIT FOR SSH COMMAND BELOW"
-          echo "  Copy the ssh ...@...tmate.io line"
-          echo "  Paste it in PowerShell to connect"
-          echo "  Password: twrp123"
-          echo "==========================================="
-
-      - name: Start SSH via tmate
+      - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 360
