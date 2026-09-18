@@ -73,7 +73,7 @@ jobs:
           PRODUCT_MAKEFILES := \
               $(LOCAL_DIR)/omni_twrpx8664.mk
           COMMON_LUNCH_CHOICES := \
-              omni_twrpx8664-trunk_staging-userdebug
+              omni_twrpx8664-ap2a-userdebug
           EOF
 
           cat > device/emulator/twrpx8664/omni_twrpx8664.mk << 'EOF'
@@ -83,7 +83,7 @@ jobs:
           PRODUCT_DEVICE := twrpx8664
           PRODUCT_BRAND := generic
           PRODUCT_MODEL := TWRP x86_64
-          PRODUCT_RELEASE_NAME := trunk_staging
+          PRODUCT_RELEASE_NAME := ap2a
           EOF
 
           cat > device/emulator/twrpx8664/BoardConfig.mk << 'EOF'
@@ -97,7 +97,7 @@ jobs:
           BOARD_USES_MKE2FS := true
           TARGET_2ND_ARCH := x86
           TARGET_2ND_CPU_ABI := x86
-          TARGET_RELEASE := trunk_staging
+          TARGET_RELEASE := ap2a
           EOF
 
           cat > device/emulator/twrpx8664/device.mk << 'EOF'
@@ -121,7 +121,7 @@ jobs:
           cd workspace
           source build/envsetup.sh
           export ALLOW_MISSING_DEPENDENCIES=true
-          lunch omni_twrpx8664-trunk_staging-userdebug
+          lunch omni_twrpx8664-ap2a-userdebug
           make clean
           make recoveryimage -j$(nproc --all) 2>&1 | tee build.log
           echo "Build exit code: $?"
