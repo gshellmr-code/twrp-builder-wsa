@@ -8,8 +8,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Show my IP
-        run: curl -s ifconfig.me && echo ""
+      - name: Instructions
+        run: |
+          echo "==========================================="
+          echo "  WAIT FOR SSH COMMAND BELOW"
+          echo "  Copy the ssh ...@...tmate.io line"
+          echo "  Paste it in PowerShell to connect"
+          echo "  Password: twrp123"
+          echo "==========================================="
 
       - name: Start SSH via tmate
         uses: mxschmitt/action-tmate@v3
