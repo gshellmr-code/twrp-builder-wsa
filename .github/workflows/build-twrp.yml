@@ -203,8 +203,8 @@ jobs:
             **Instructions:**
             1. Download twrp.7z
             2. Use twrp.py --inject twrp.7z to inject into WSA initrd
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
       - uses: actions/upload-artifact@v4
