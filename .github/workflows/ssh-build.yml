@@ -1,48 +1,17 @@
-name: SSH Build - TWRP x86_64
+name: SSH Connect
 
 on:
   workflow_dispatch:
-    inputs:
-      timeout_minutes:
-        description: 'SSH session timeout (minutes)'
-        required: false
-        default: '180'
 
 jobs:
-  build:
+  ssh:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      - name: Free Disk Space
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-          sudo apt-get clean
-          df -h /
-
-      - name: Install Build Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            bc bison build-essential ccache curl flex \
-            g++-multilib gcc-multilib git gnupg gperf \
-            imagemagick lib32ncurses5-dev lib32readline-dev \
-            lib32z1-dev liblz4-tool libncurses5 libncurses5-dev \
-            libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
-            lzop pngcrush rsync schedtool squashfs-tools \
-            xsltproc zip zlib1g-dev openjdk-11-jdk \
-            python3 python3-pip p7zip-full adb fastboot
-
-      - name: Install Repo Tool
-        run: |
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
-
       - name: Setup SSH
         run: |
+          sudo apt-get update
           sudo apt-get install -y openssh-server
           sudo mkdir -p /run/sshd
           echo "runner:twrp123" | sudo chpasswd
@@ -50,9 +19,10 @@ jobs:
           sudo sed -i 's/UsePAM yes/UsePAM no/' /etc/ssh/sshd_config
           sudo ssh-keygen -A
           sudo service ssh start
+          echo "=== SSH Ready ==="
 
       - name: Expose SSH via tmate
         uses: mxschmitt/action-tmate@v3
-        timeout-minutes: ${{ fromJson(github.event.inputs.timeout_minutes || '180') }}
+        timeout-minutes: 360
         with:
           limit-access-to-actor: false
