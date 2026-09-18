@@ -72,6 +72,8 @@ jobs:
           cat > device/emulator/twrpx8664/AndroidProducts.mk << 'EOF'
           PRODUCT_MAKEFILES := \
               $(LOCAL_DIR)/omni_twrpx8664.mk
+          COMMON_LUNCH_CHOICES := \
+              omni_twrpx8664-eng
           EOF
 
           cat > device/emulator/twrpx8664/omni_twrpx8664.mk << 'EOF'
@@ -102,9 +104,7 @@ jobs:
           PRODUCT_DEVICE := twrpx8664
           EOF
 
-          cat > device/emulator/twrpx8664/vendorsetup.sh << 'EOF'
-          add_lunch_combo omni_twrpx8664-eng
-          EOF
+          rm -f device/emulator/twrpx8664/vendorsetup.sh
 
           echo "=== Device tree created ==="
           ls -la device/emulator/twrpx8664/
