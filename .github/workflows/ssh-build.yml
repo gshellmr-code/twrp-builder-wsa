@@ -8,9 +8,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - name: Setup SSH server
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server
+          sudo mkdir -p /run/sshd
+          echo "runner:twrp123" | sudo chpasswd
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/UsePAM yes/UsePAM no/' /etc/ssh/sshd_config
+          sudo ssh-keygen -A
+          sudo service ssh start
 
-      - name: Setup SSH
-        uses: P3TERX/Actions-OpenSSH@master
-        env:
-          SSH_PASSWORD: twrp123
+      - name: Create tunnel and show SSH command
+        run: |
+          echo "==========================================="
+          echo "  Creating SSH tunnel..."
+          echo "==========================================="
+          ssh -o StrictHostKeyChecking=no -R 80:localhost:22 nokey@localhost.run 2>&1 &
+          TUNNEL_PID=$!
+          sleep 15
+          echo ""
+          echo "==========================================="
+          echo "  Copy the ssh command above and paste"
+          echo "  it in PowerShell to connect"
+          echo "  Password: twrp123"
+          echo "==========================================="
+          while true; do sleep 60; done
