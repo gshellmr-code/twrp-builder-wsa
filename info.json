@@ -1,10 +1,10 @@
 {
-  "twrp_support": true,
-  "gapp_support": unknow,
-  "root_support": unknow,
-  "root_method": unknow,
-  "amazon_support": unknow,
-  "build_version": "4.1.0",
-  "wsa_version": "unknow",
-  "recovery_flag": false
+  "twrp_support": "true",
+  "gapp_support": "Unknow",
+  "root_support": "Unknow",
+  "root_method": "Unknow",
+  "amazon_support": "Unknow",
+  "build_version": "3.1.0",
+  "wsa_version": "Unknow",
+  "recovery_flag": "false"
 }

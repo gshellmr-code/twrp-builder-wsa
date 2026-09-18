@@ -20,7 +20,7 @@ static int read_file(const char *path, char *buf, int bufsize) {
 int main(void) {
     char buf[1024];
     if (read_file(INFO_JSON, buf, sizeof(buf)) > 0) {
-        if (strstr(buf, "\"recovery_flag\":true"))
+        if (strstr(buf, "\"recovery_flag\": \"true\""))
             execl(TWRP_BIN, "twrp", NULL);
     }
     execl(LSPINIT, "lspinit", NULL);
