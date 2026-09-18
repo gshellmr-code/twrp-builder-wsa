@@ -1,0 +1,229 @@
+name: SSH Build - TWRP x86_64
+
+on:
+  workflow_dispatch:
+    inputs:
+      timeout_minutes:
+        description: 'SSH session timeout (minutes, default 180)'
+        required: false
+        default: '180'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check Out
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          sudo apt-get clean
+          echo "=== Disk space after cleanup ==="
+          df -h /
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git gnupg gperf \
+            imagemagick lib32ncurses5-dev lib32readline-dev \
+            lib32z1-dev liblz4-tool libncurses5 libncurses5-dev \
+            libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
+            lzop pngcrush rsync schedtool squashfs-tools \
+            xsltproc zip zlib1g-dev openjdk-11-jdk \
+            python3 python3-pip
+
+      - name: Install Repo Tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Initialize Repo
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p workspace
+          cd workspace
+          repo init -u https://android.googlesource.com/platform/manifest \
+            -b android-14.0.0_r1 \
+            --depth=1
+          repo sync -c --no-tags -j$(nproc --all) --force-sync
+          echo "=== Repo sync done ==="
+          df -h /
+
+      - name: Create Device Tree
+        run: |
+          cd $GITHUB_WORKSPACE/workspace
+          mkdir -p device/emulator/twrpx8664
+
+          cat > device/emulator/twrpx8664/AndroidProducts.mk << 'EOF'
+          PRODUCT_MAKEFILES := \
+              $(LOCAL_DIR)/omni_twrpx8664.mk
+          COMMON_LUNCH_CHOICES := \
+              omni_twrpx8664-ap2a-userdebug
+          EOF
+
+          cat > device/emulator/twrpx8664/omni_twrpx8664.mk << 'EOF'
+          $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit.mk)
+          $(call inherit-product, $(SRC_TARGET_DIR)/product/aosp_base.mk)
+          PRODUCT_NAME := omni_twrpx8664
+          PRODUCT_DEVICE := twrpx8664
+          PRODUCT_BRAND := generic
+          PRODUCT_MODEL := TWRP x86_64
+          TW_THEME := landscape_hdpi
+          TW_SCREEN_WIDTH := 1920
+          TW_SCREEN_HEIGHT := 1080
+          EOF
+
+          cat > device/emulator/twrpx8664/BoardConfig.mk << 'EOF'
+          TARGET_ARCH := x86_64
+          TARGET_ARCH_VARIANT := x86_64
+          TARGET_CPU_ABI := x86_64
+          TARGET_BOARD_PLATFORM := goldfish
+          TARGET_NO_KERNEL := false
+          TARGET_NO_RECOVERY := false
+          BOARD_KERNEL_IMAGE_NAME := bzImage
+          BOARD_USES_MKE2FS := true
+          TARGET_2ND_ARCH := x86
+          TARGET_2ND_CPU_ABI := x86
+          EOF
+
+          cat > device/emulator/twrpx8664/device.mk << 'EOF'
+          $(call inherit-product, $(SRC_TARGET_DIR)/product/x86_64.mk)
+          PRODUCT_NAME := omni_twrpx8664
+          PRODUCT_DEVICE := twrpx8664
+          EOF
+
+          rm -f device/emulator/twrpx8664/vendorsetup.sh
+          echo "=== Device tree created ==="
+          ls -la device/emulator/twrpx8664/
+
+      - name: Expose SSH via tmate
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: ${{ fromJson(github.event.inputs.timeout_minutes || '180') }}
+        with:
+          limit-access-to-actor: false
+
+      - name: Build Recovery Image
+        if: always()
+        run: |
+          cd $GITHUB_WORKSPACE/workspace
+          source build/envsetup.sh
+          export ALLOW_MISSING_DEPENDENCIES=true
+          lunch omni_twrpx8664-ap2a-userdebug
+          make clean
+          make recoveryimage -j$(nproc --all) 2>&1 | tee /tmp/build.log
+          echo "Build exit code: $?"
+          echo ""
+          echo "=== Build log tail ==="
+          tail -50 /tmp/build.log
+
+      - name: Package Output
+        if: always()
+        run: |
+          cd $GITHUB_WORKSPACE/workspace
+          mkdir -p /tmp/twrp_output
+          
+          PRODUCT=$(find out/target/product -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)
+          echo "Product dir: $PRODUCT"
+          
+          if [ -n "$PRODUCT" ]; then
+            # Look for ramdisk-recovery.img or recovery.img
+            RECOVERY_IMG=""
+            for f in "$PRODUCT/ramdisk-recovery.img" "$PRODUCT/recovery.img" "$PRODUCT/ramdisk-recovery.cpio.gz"; do
+              if [ -f "$f" ]; then
+                RECOVERY_IMG="$f"
+                break
+              fi
+            done
+            
+            if [ -z "$RECOVERY_IMG" ]; then
+              echo "No recovery image found, looking for any .img files..."
+              find "$PRODUCT" -maxdepth 2 -name "*.img" 2>/dev/null
+              find "$PRODUCT" -maxdepth 2 -name "*.cpio*" 2>/dev/null
+              # Fallback: package everything
+              cp -r "$PRODUCT"/* /tmp/twrp_output/ 2>/dev/null || true
+            else
+              echo "Found recovery: $RECOVERY_IMG"
+              
+              # Extract ramdisk
+              mkdir -p /tmp/ramdisk
+              cd /tmp/ramdisk
+              
+              if [[ "$RECOVERY_IMG" == *.cpio.gz ]]; then
+                zcat "$RECOVERY_IMG" | cpio -idm 2>/dev/null
+              elif [[ "$RECOVERY_IMG" == *.img ]]; then
+                cpio -idm < "$RECOVERY_IMG" 2>/dev/null || \
+                zcat "$RECOVERY_IMG" | cpio -idm 2>/dev/null || \
+                cp "$RECOVERY_IMG" /tmp/ramdisk/ramdisk.img
+              fi
+              
+              ls -la /tmp/ramdisk/ 2>/dev/null
+              ls -la /tmp/ramdisk/sbin/ 2>/dev/null || echo "No sbin"
+              
+              # Package twrp.7z contents
+              mkdir -p /tmp/twrp_output/overlay.d
+              cp -r /tmp/ramdisk/* /tmp/twrp_output/overlay.d/ 2>/dev/null || true
+              
+              # Copy recovery image
+              cp "$RECOVERY_IMG" /tmp/twrp_output/twrp.img
+            fi
+          else
+            echo "No product directory found"
+          fi
+          
+          echo "=== Output contents ==="
+          ls -la /tmp/twrp_output/ 2>/dev/null
+
+      - name: Create Release Archive
+        if: always()
+        run: |
+          cd /tmp/twrp_output
+          7z a -t7z -mx=9 /tmp/twrp.7z . || \
+          tar czf /tmp/twrp.tar.gz .
+          ls -la /tmp/twrp* 2>/dev/null
+
+      - name: Upload to GitHub Release
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ssh-build-${{ github.run_id }}
+          name: TWRP x86_64 SSH Build ${{ github.run_id }}
+          body: |
+            TWRP x86_64 for WSA
+            
+            Build: ${{ github.run_id }}
+            Runner: Ubuntu (cloud)
+            
+            **Files:**
+            - twrp.7z — TWRP ramdisk files
+            - twrp.img — Raw recovery image
+            
+            **Usage:**
+            ```
+            twrp.py --inject twrp.7z
+            ```
+          files: |
+            /tmp/twrp.7z
+            /tmp/twrp_output/twrp.img
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-x86_64-ssh-build-${{ github.run_id }}
+          path: /tmp/twrp_output/
+          retention-days: 30
