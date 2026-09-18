@@ -11,7 +11,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     permissions:
       contents: write
 
@@ -54,76 +54,101 @@ jobs:
         run: |
           mkdir workspace
           cd workspace
-          echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
           git config --global user.name "CYBER-BUDDY"
           git config --global user.email "gshellmr-code@users.noreply.github.com"
           repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
             -b ${{ github.event.inputs.manifest_branch || 'twrp-14.1' }}
-        id: pwd
 
       - name: Repo Sync
         run: |
           cd workspace
           repo sync -j$(nproc --all) --force-sync
 
+      - name: Create x86_64 emulator device tree
+        run: |
+          cd workspace
+          mkdir -p device/emulator/twrpx8664
+
+          cat > device/emulator/twrpx8664/AndroidProducts.mk << 'EOF'
+          PRODUCT_MAKEFILES := \
+              $(LOCAL_DIR)/omni_twrpx8664.mk
+          EOF
+
+          cat > device/emulator/twrpx8664/omni_twrpx8664.mk << 'EOF'
+          $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit.mk)
+          $(call inherit-product, $(SRC_TARGET_DIR)/product/aosp_base.mk)
+          PRODUCT_NAME := omni_twrpx8664
+          PRODUCT_DEVICE := twrpx8664
+          PRODUCT_BRAND := generic
+          PRODUCT_MODEL := TWRP x86_64
+          EOF
+
+          cat > device/emulator/twrpx8664/BoardConfig.mk << 'EOF'
+          TARGET_ARCH := x86_64
+          TARGET_ARCH_VARIANT := x86_64
+          TARGET_CPU_ABI := x86_64
+          TARGET_BOARD_PLATFORM := goldfish
+          TARGET_NO_KERNEL := false
+          TARGET_NO_RECOVERY := false
+          BOARD_KERNEL_IMAGE_NAME := bzImage
+          BOARD_USES_MKE2FS := true
+          TARGET_2ND_ARCH := x86
+          TARGET_2ND_CPU_ABI := x86
+          EOF
+
+          cat > device/emulator/twrpx8664/device.mk << 'EOF'
+          $(call inherit-product, $(SRC_TARGET_DIR)/product/x86_64.mk)
+          PRODUCT_NAME := omni_twrpx8664
+          PRODUCT_DEVICE := twrpx8664
+          EOF
+
+          cat > device/emulator/twrpx8664/vendorsetup.sh << 'EOF'
+          add_lunch_combo omni_twrpx8664-eng
+          EOF
+
+          echo "=== Device tree created ==="
+          ls -la device/emulator/twrpx8664/
+
       - name: Set Swap Space
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 12
-
-      - name: List available lunch targets
-        run: |
-          cd workspace
-          source build/envsetup.sh
-          echo "=== Available products ==="
-          lunch 2>&1 | head -80 || true
-          echo ""
-          echo "=== Searching for x86_64 ==="
-          grep -ri "x86_64\|x86" device/*/AndroidProducts.mk device/*/*/AndroidProducts.mk 2>/dev/null | head -20 || true
-        continue-on-error: true
 
       - name: Build Recovery Image
         run: |
           cd workspace
           source build/envsetup.sh
           export ALLOW_MISSING_DEPENDENCIES=true
-          lunch aosp_cf_x86_64_phone-ap2a-userdebug
+          lunch omni_twrpx8664-eng
           make clean
           make recoveryimage -j$(nproc --all) 2>&1 | tee build.log
           echo "Build exit code: $?"
-        continue-on-error: true
-
-      - name: Locate Output Files
-        run: |
-          cd workspace
-          echo "=== Product dirs ==="
-          ls out/target/product/ 2>/dev/null || echo "No product dir"
-          echo ""
-          for d in out/target/product/*/; do
-            echo "=== $d ==="
-            ls "$d"ramdisk-recovery* "$d"recovery.img 2>/dev/null || echo "  no recovery files"
-          done
           echo ""
           echo "=== Build log tail ==="
-          tail -80 build.log 2>/dev/null || echo "No build log"
-        continue-on-error: true
+          tail -50 build.log
 
-      - name: Extract ramdisk
+      - name: Find and package output
         run: |
           cd workspace
-          PRODUCT=$(find out/target/product -maxdepth 1 -mindepth 1 -type d | head -1)
-          echo "Product: $PRODUCT"
           mkdir -p /tmp/ramdisk
           
-          if [ -f "$PRODUCT/ramdisk-recovery.img" ]; then
-            echo "Extracting ramdisk-recovery.img..."
-            cd /tmp/ramdisk
-            cpio -idm < $GITHUB_WORKSPACE/workspace/$PRODUCT/ramdisk-recovery.img
-          elif [ -f "$PRODUCT/recovery.img" ]; then
-            echo "Extracting recovery.img (Android boot image format)..."
-            python3 -c "
+          PRODUCT=$(find out/target/product -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)
+          echo "Product dir: $PRODUCT"
+          
+          if [ -n "$PRODUCT" ]; then
+            ls -la "$PRODUCT"/ 2>/dev/null | head -30
+            echo ""
+            echo "=== Recovery files ==="
+            find "$PRODUCT" -maxdepth 1 \( -name "ramdisk-recovery*" -o -name "recovery.img" -o -name "*.img" \) 2>/dev/null
+            
+            if [ -f "$PRODUCT/ramdisk-recovery.img" ]; then
+              echo "Extracting ramdisk-recovery.img..."
+              cpio -idm < "$PRODUCT/ramdisk-recovery.img"
+            elif [ -f "$PRODUCT/recovery.img" ]; then
+              echo "Extracting recovery.img..."
+              python3 << 'PYEOF'
           import struct, gzip, os
-          with open('$GITHUB_WORKSPACE/workspace/$PRODUCT/recovery.img', 'rb') as f:
+          with open("RECOVERY_IMG", 'rb') as f:
               data = f.read()
           if data[:8] == b'ANDROID!':
               ksize = struct.unpack('<I', data[8:12])[0]
@@ -136,14 +161,19 @@ jobs:
               os.makedirs('/tmp/ramdisk', exist_ok=True)
               with open('/tmp/ramdisk.img', 'wb') as f:
                   f.write(rdata)
-          "
-            cd /tmp/ramdisk
-            cpio -idm < /tmp/ramdisk.img
-          else
-            echo "No recovery image found. Checking build log..."
-            tail -100 workspace/build.log 2>/dev/null
+          PYEOF
+              cd /tmp/ramdisk
+              cpio -idm < /tmp/ramdisk.img
+            fi
           fi
-        continue-on-error: true
+          
+          echo ""
+          echo "=== Ramdisk contents ==="
+          ls -la /tmp/ramdisk/ 2>/dev/null || echo "Empty"
+          ls -la /tmp/ramdisk/sbin/ 2>/dev/null || echo "No sbin"
+          ls -la /tmp/ramdisk/twres/ 2>/dev/null || echo "No twres"
+        env:
+          RECOVERY_IMG: ${{ github.workspace }}/workspace/${{ steps.find.outputs.product }}/recovery.img
 
       - name: Compile dispatcher (init)
         run: |
@@ -153,9 +183,8 @@ jobs:
               $GITHUB_WORKSPACE/init.c
             echo "Dispatcher compiled"
           else
-            echo "No TWRP binary found, creating minimal init"
-            echo '#!/sbin/sh' > /tmp/ramdisk/init
-            echo 'exec /sbin/sh' >> /tmp/ramdisk/init
+            echo "No TWRP binary found, creating fallback init"
+            printf '#!/sbin/sh\nexec /sbin/sh\n' > /tmp/ramdisk/init
             chmod +x /tmp/ramdisk/init
           fi
           file /tmp/ramdisk/init
@@ -165,24 +194,14 @@ jobs:
           cp $GITHUB_WORKSPACE/info.json /tmp/ramdisk/info.json
           cp $GITHUB_WORKSPACE/patch.json /tmp/ramdisk/patch.json
 
-      - name: Verify x86_64
+      - name: Verify
         run: |
-          echo "=== Files ==="
-          ls -la /tmp/ramdisk/
+          echo "=== All files ==="
+          find /tmp/ramdisk -type f | head -50
           echo ""
           echo "=== TWRP binary ==="
-          file /tmp/ramdisk/sbin/twrp 2>/dev/null || echo "twrp not found at /sbin/twrp"
+          file /tmp/ramdisk/sbin/twrp 2>/dev/null || echo "twrp not found"
           file /tmp/ramdisk/sbin/recovery 2>/dev/null || echo "recovery not found"
-          echo ""
-          echo "=== Linker ==="
-          file /tmp/ramdisk/sbin/linker64 2>/dev/null || echo "linker64 not found"
-          echo ""
-          echo "=== GUI resources ==="
-          ls -la /tmp/ramdisk/twres/ 2>/dev/null || echo "twres not found"
-          ls -la /tmp/ramdisk/res/ 2>/dev/null || echo "res not found"
-          echo ""
-          echo "=== init ==="
-          file /tmp/ramdisk/init
           echo ""
           echo "=== info.json ==="
           cat /tmp/ramdisk/info.json
@@ -193,11 +212,19 @@ jobs:
           7z a /tmp/twrp.7z .
           ls -la /tmp/twrp.7z
 
+      - name: Create twrp.img (cpio archive)
+        run: |
+          cd /tmp/ramdisk
+          find . -print0 | cpio -o -0 -H newc 2>/dev/null > /tmp/twrp.img || \
+          find . | cpio -o -H newc 2>/dev/null > /tmp/twrp.img
+          ls -la /tmp/twrp.img
+
       - name: Upload to GitHub Release
-        if: success()
         uses: softprops/action-gh-release@v2
         with:
-          files: /tmp/twrp.7z
+          files: |
+            /tmp/twrp.7z
+            /tmp/twrp.img
           name: "twrp-x86_64-wsa-${{ github.run_id }}"
           tag_name: "build-${{ github.run_id }}"
           body: |
@@ -206,9 +233,14 @@ jobs:
             Build: ${{ github.run_id }}
             Manifest: ${{ github.event.inputs.manifest_branch || 'twrp-14.1' }}
             
-            **Instructions:**
-            1. Download twrp.7z
-            2. Use twrp.py --inject twrp.7z to inject into WSA initrd
+            **Files:**
+            - twrp.7z — TWRP ramdisk files for twrp.py --inject
+            - twrp.img — Raw cpio ramdisk image
+            
+            **Usage:**
+            ```
+            twrp.py --inject twrp.7z
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
@@ -216,5 +248,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: twrp-x86_64-wsa
-          path: /tmp/twrp.7z
+          path: |
+            /tmp/twrp.7z
+            /tmp/twrp.img
           retention-days: 30
