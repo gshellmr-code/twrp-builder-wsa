@@ -19,18 +19,13 @@ jobs:
           sudo ssh-keygen -A
           sudo service ssh start
 
-      - name: Create tunnel and show SSH command
+      - name: Start SSH tunnel via bore
         run: |
-          echo "==========================================="
-          echo "  Creating SSH tunnel..."
-          echo "==========================================="
-          ssh -o StrictHostKeyChecking=no -R 80:localhost:22 nokey@localhost.run 2>&1 &
-          TUNNEL_PID=$!
-          sleep 15
+          curl -sL https://github.com/ekzhang/bore/releases/latest/download/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz | tar xz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
+          bore local 22 --to bore.pub 2>&1 &
+          sleep 10
           echo ""
-          echo "==========================================="
-          echo "  Copy the ssh command above and paste"
-          echo "  it in PowerShell to connect"
-          echo "  Password: twrp123"
-          echo "==========================================="
+          echo "Copy the SSH command from above and paste in PowerShell"
           while true; do sleep 60; done
